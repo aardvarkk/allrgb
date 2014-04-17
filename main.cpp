@@ -36,12 +36,12 @@ struct ColorLab
 struct Point
 {
   Point() : x(0), y(0) {}
-  Point(short x, short y, ColorRGB ColorRGB) : x(x), y(y), ColorRGB(ColorRGB) {}
+  Point(short x, short y, ColorRGB color) : x(x), y(y), color(color) {}
   short x, y;
-  ColorRGB ColorRGB;
+  ColorRGB color;
 };
 
-vector<unsigned char> ColorRGB_to_lodepng(vector<ColorRGB> ColorRGB)
+vector<unsigned char> color_to_lodepng(vector<ColorRGB> ColorRGB)
 {
   vector<unsigned char> lodepng(ColorRGB.size()*4);
   size_t j = 0;
@@ -67,14 +67,14 @@ vector<Point> lodepng_to_point(vector<unsigned char> lodepng, unsigned int w, un
   return point;
 }
 
-deque<ColorRGB> all_ColorRGBs()
+deque<ColorRGB> all_colors()
 {
-  deque<ColorRGB> all_ColorRGBs;
+  deque<ColorRGB> all_colors;
   for (int r = 0; r < 256; ++r)
     for (int g = 0; g < 256; ++g)
       for (int b = 0; b < 256; ++b)
-        all_ColorRGBs.push_back(ColorRGB(r, g, b));
-  return all_ColorRGBs;
+        all_colors.push_back(ColorRGB(r, g, b));
+  return all_colors;
 }
 
 // http://www.easyrgb.com/index.php?X=MATH
@@ -161,6 +161,15 @@ double color_diff_CIE76(ColorRGB const& a, ColorRGB const& b)
   return dL * dL + da * da + db * db;
 }
 
+double color_diff_CIE76_speedy(ColorLab const& lab_a, ColorRGB const& b)
+{
+  auto lab_b = xyz_to_lab(rgb_to_xyz(b));
+  auto dL = lab_a.L - lab_b.L;
+  auto da = lab_a.a - lab_b.a;
+  auto db = lab_a.b - lab_b.b;
+  return dL * dL + da * da + db * db;
+}
+
 int color_diff(ColorRGB const& a, ColorRGB const& b)
 {
   int dr = a.r - b.r;
@@ -194,8 +203,8 @@ int main(int argc, char* argv[])
   vector<Point> orig = lodepng_to_point(input, width, height);
   cout << "Converted to points" << endl;
 
-  deque<ColorRGB> todo = all_ColorRGBs();
-  cout << "Generated all ColorRGBs" << endl;
+  deque<ColorRGB> todo = all_colors();
+  cout << "Generated all colors" << endl;
 
   // TEST DATA
   //deque<ColorRGB> todo;
@@ -214,11 +223,12 @@ int main(int argc, char* argv[])
     auto todo_it   = todo.begin();
     //int  min_diff  = INT_MAX;
     double min_diff = DBL_MAX;
+    auto lab_p = xyz_to_lab(rgb_to_xyz(p.color));
     for (int i = 0; i < kAttempts; ++i) {
       if (todo_it == todo.end()) {
         break;
       }
-      auto diff = color_diff_CIE76(p.ColorRGB, *todo_it);
+      auto diff = color_diff_CIE76_speedy(lab_p, *todo_it);
       if (diff < min_diff) {
         min_diff = diff;
         chosen_it = todo_it;
@@ -235,7 +245,7 @@ int main(int argc, char* argv[])
   }
   cout << "Filled output" << endl;
 
-  lodepng::encode(argv[2], ColorRGB_to_lodepng(output), width, height);
+  lodepng::encode(argv[2], color_to_lodepng(output), width, height);
   cout << "Encoded output" << endl;
   
   return EXIT_SUCCESS;
