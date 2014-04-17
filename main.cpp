@@ -3,6 +3,7 @@
 #include <deque>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 using namespace std;
 
@@ -178,6 +179,67 @@ int color_diff(ColorRGB const& a, ColorRGB const& b)
   return dr * dr + dg * dg + db * db;
 }
 
+struct ThreadArgs
+{
+  vector<Point>* orig;
+  deque<ColorRGB>* todo_all;
+  vector<ColorRGB>* output;
+  unsigned int width;
+};
+
+void choose_colors(
+  unsigned int tid,
+  unsigned int num_threads,
+  ThreadArgs const& args
+  )
+{
+  auto orig = *args.orig;
+  auto todo_all = *args.todo_all;
+  auto output = *args.output;
+  auto width = args.width;
+
+  auto batch_size = orig.size() / num_threads;
+  auto offset = tid * batch_size;
+  auto orig_it = orig.begin() + offset;
+  cout << "Thread " << tid << " has batch size " << batch_size << " and offset " << offset << endl;
+
+  // Create a todo batch by copying from all
+  deque<ColorRGB> todo(batch_size);
+  for (unsigned int i = offset; i < offset + batch_size; ++i) {
+    todo.push_back(todo_all[i]);
+  }
+  cout << "Thread " << tid << " created todo list" << endl;
+
+  for (unsigned int px = 0; px < batch_size; ++px, ++orig_it) {
+
+    auto chosen_it = todo.begin();
+    auto todo_it   = todo.begin();
+    //int  min_diff  = INT_MAX;
+    double min_diff = DBL_MAX;
+    auto lab_p = xyz_to_lab(rgb_to_xyz(orig_it->color));
+    for (int i = 0; i < kAttempts; ++i) {
+      if (todo_it == todo.end()) {
+        break;
+      }
+      auto diff = color_diff_CIE76_speedy(lab_p, *todo_it);
+      if (diff < min_diff) {
+        min_diff = diff;
+        chosen_it = todo_it;
+      }
+      ++todo_it;
+    }
+
+    if (px % 100000 == 0) {
+      cout << "Thread " << tid << " finished " << px << " of " << batch_size << " pixels" << endl;
+    }
+
+    output[width * orig_it->y + orig_it->x] = *chosen_it;
+    todo.erase(chosen_it);
+  }
+
+  //cout << "Filled output" << endl;
+}
+
 int main(int argc, char* argv[])
 {
   vector<unsigned char> input;
@@ -217,34 +279,19 @@ int main(int argc, char* argv[])
 
   vector<ColorRGB> output(width * height);
 
-  int px = 0;
-  for (auto p : orig) {
-    auto chosen_it = todo.begin();
-    auto todo_it   = todo.begin();
-    //int  min_diff  = INT_MAX;
-    double min_diff = DBL_MAX;
-    auto lab_p = xyz_to_lab(rgb_to_xyz(p.color));
-    for (int i = 0; i < kAttempts; ++i) {
-      if (todo_it == todo.end()) {
-        break;
-      }
-      auto diff = color_diff_CIE76_speedy(lab_p, *todo_it);
-      if (diff < min_diff) {
-        min_diff = diff;
-        chosen_it = todo_it;
-      }
-      ++todo_it;
-    }
+  // Package to send to thread
+  ThreadArgs args;
+  args.orig = &orig;
+  args.output = &output;
+  args.todo_all = &todo;
+  args.width = width;
 
-    output[width * p.y + p.x] = *chosen_it;
-    todo.erase(chosen_it);
-
-    if (++px % 100000 == 0) {
-      cout << "Finished " << px << " of " << width * height << " pixels" << endl;
-    }
+  auto num_threads = thread::hardware_concurrency();
+  vector<thread> threads;
+  for (unsigned int tid = 0; tid < num_threads; ++tid) {
+    threads.push_back(thread(choose_colors, tid, num_threads, args));
   }
-  cout << "Filled output" << endl;
-
+ 
   lodepng::encode(argv[2], color_to_lodepng(output), width, height);
   cout << "Encoded output" << endl;
   
