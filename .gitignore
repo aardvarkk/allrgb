@@ -1,0 +1,8 @@
+Debug/*
+Release/*
+*.opensdf
+*.sdf
+*.user
+*.suo
+build/*
+dist/*
