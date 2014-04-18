@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <deque>
 #include <iostream>
 #include <string>
@@ -169,6 +170,35 @@ double color_diff_CIE76_speedy(ColorLab const& lab_a, ColorRGB const& b)
   auto da = lab_a.a - lab_b.a;
   auto db = lab_a.b - lab_b.b;
   return dL * dL + da * da + db * db;
+  //return dL * dL;
+  //return da * da;
+  //return db * db;
+}
+
+double color_diff_CIE94_speedy(ColorLab const& lab_a, ColorRGB const& b)
+{
+  //WHT-L, WHT-C, WHT-H                //Weighting factors depending
+                                     //on the application (1 = default)
+
+  auto lab_b = xyz_to_lab(rgb_to_xyz(b));
+
+  auto xC1 = sqrt(lab_a.a * lab_a.a + lab_a.b * lab_a.b);
+  auto xC2 = sqrt(lab_b.a * lab_b.a + lab_b.b * lab_b.b);
+  auto xDL = lab_b.L - lab_a.L;
+  auto xDC = xC2 - xC1;
+  auto xDE = sqrt( ( ( lab_a.L - lab_b.L ) * ( lab_a.L - lab_b.L ) )
+            + ( ( lab_a.a - lab_b.a ) * ( lab_a.a - lab_b.a ) )
+            + ( ( lab_a.b - lab_b.b ) * ( lab_a.b - lab_b.b ) ) );
+  double xDH = 0;
+  if ( sqrt( xDE ) > ( sqrt( abs( xDL ) ) + sqrt( abs( xDC ) ) ) ) {
+     xDH = sqrt( ( xDE * xDE ) - ( xDL * xDL ) - ( xDC * xDC ) );
+  }
+  auto xSC = 1 + ( 0.045 * xC1 );
+  auto xSH = 1 + ( 0.015 * xC1 );
+  //xDL /= WHT-L
+  xDC /= /*WHT-C * */ xSC;
+  xDH /= /*WHT-H * */ xSH;
+  return sqrt(xDL * xDL + xDC * xDC + xDH *xDH);
 }
 
 int color_diff(ColorRGB const& a, ColorRGB const& b)
@@ -193,20 +223,21 @@ void choose_colors(
   ThreadArgs const& args
   )
 {
-  auto orig = *args.orig;
-  auto todo_all = *args.todo_all;
-  auto output = *args.output;
+  auto orig = args.orig;
+  auto todo_all = args.todo_all;
+  auto output = args.output;
   auto width = args.width;
 
-  auto batch_size = orig.size() / num_threads;
+  auto batch_size = orig->size() / num_threads;
   auto offset = tid * batch_size;
-  auto orig_it = orig.begin() + offset;
+  auto orig_it = orig->begin() + offset;
   cout << "Thread " << tid << " has batch size " << batch_size << " and offset " << offset << endl;
 
   // Create a todo batch by copying from all
   deque<ColorRGB> todo(batch_size);
+  int j = 0;
   for (unsigned int i = offset; i < offset + batch_size; ++i) {
-    todo.push_back(todo_all[i]);
+    todo[j++] = todo_all->at(i);
   }
   cout << "Thread " << tid << " created todo list" << endl;
 
@@ -221,7 +252,13 @@ void choose_colors(
       if (todo_it == todo.end()) {
         break;
       }
-      auto diff = color_diff_CIE76_speedy(lab_p, *todo_it);
+      //auto diff = color_diff(orig_it->color, *todo_it);
+      //auto diff = color_diff_CIE76_speedy(lab_p, *todo_it);
+      auto diff = color_diff_CIE94_speedy(lab_p, *todo_it);
+      //auto diff = color_diff_CIE76(
+      //  orig_it->color, 
+      //  *todo_it
+      //  );
       if (diff < min_diff) {
         min_diff = diff;
         chosen_it = todo_it;
@@ -233,34 +270,45 @@ void choose_colors(
       cout << "Thread " << tid << " finished " << px << " of " << batch_size << " pixels" << endl;
     }
 
-    output[width * orig_it->y + orig_it->x] = *chosen_it;
+    output->at(width * orig_it->y + orig_it->x) = *chosen_it;
     todo.erase(chosen_it);
   }
 
-  //cout << "Filled output" << endl;
+  cout << "Thread " << tid << " done filling output" << endl;
+  return;
 }
 
 int main(int argc, char* argv[])
 {
   vector<unsigned char> input;
   unsigned int width, height;
-  lodepng::decode(input, width, height, argv[1]);
-  cout << "Decoded image" << endl;
-  
-  assert(width == kWorkingW);
-  assert(height == kWorkingH);
 
   // TEST DATA
-  //width = 2;
-  //height = 1;
-  //input.push_back(255);
-  //input.push_back(0);
-  //input.push_back(0);
-  //input.push_back(255);
-  //input.push_back(0);
-  //input.push_back(255);
-  //input.push_back(0);
-  //input.push_back(255);
+  ColorRGB testRGB(123, 45, 67);
+  auto testXYZ = rgb_to_xyz(testRGB);
+  auto testLab = xyz_to_lab(testXYZ);
+  ColorRGB testRGB2(90, 101, 121);
+  auto testXYZ2 = rgb_to_xyz(testRGB2);
+  auto testLab2 = xyz_to_lab(testXYZ2);
+  auto diff = color_diff_CIE76_speedy(testLab, testRGB2);
+
+  lodepng::decode(input, width, height, argv[1]);
+  cout << "Decoded image" << endl;
+  //assert(width == kWorkingW);
+  //assert(height == kWorkingH);
+
+  //// TEST DATA
+  //width  = 256;
+  //height = 256;
+  //input = vector<unsigned char>(4 * width * height);
+  //for (size_t i = 0; i < input.size(); ++i) {
+  //  input[i] = rand() % 256;
+  //}
+  //// Full alpha
+  //for (size_t i = 3; i < input.size(); i += 4) {
+  //  input[i] = 255;
+  //}
+  //lodepng::encode("test.png", input, width, height);
 
   vector<Point> orig = lodepng_to_point(input, width, height);
   cout << "Converted to points" << endl;
@@ -268,10 +316,11 @@ int main(int argc, char* argv[])
   deque<ColorRGB> todo = all_colors();
   cout << "Generated all colors" << endl;
 
-  // TEST DATA
-  //deque<ColorRGB> todo;
-  //todo.push_back(ColorRGB(0, 254, 0));
-  //todo.push_back(ColorRGB(254, 0, 0));
+  //// TEST DATA
+  //deque<ColorRGB> todo(width * height);
+  //for (size_t i = 0; i < todo.size(); ++i) {
+  //  todo[i] = ColorRGB(rand() % 256, rand() % 256, rand() % 256);
+  //}
 
   random_shuffle(orig.begin(), orig.end());
   random_shuffle(todo.begin(), todo.end());
@@ -281,16 +330,20 @@ int main(int argc, char* argv[])
 
   // Package to send to thread
   ThreadArgs args;
-  args.orig = &orig;
-  args.output = &output;
+  args.orig     = &orig;
+  args.output   = &output;
   args.todo_all = &todo;
-  args.width = width;
+  args.width    = width;
 
   auto num_threads = thread::hardware_concurrency();
   vector<thread> threads;
   for (unsigned int tid = 0; tid < num_threads; ++tid) {
     threads.push_back(thread(choose_colors, tid, num_threads, args));
   }
+  for (auto& t : threads) {
+    t.join();
+  }
+  cout << "Threads joined" << endl;
  
   lodepng::encode(argv[2], color_to_lodepng(output), width, height);
   cout << "Encoded output" << endl;
